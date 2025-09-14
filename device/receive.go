@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/wireguard-go/conn"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
-	"github.com/sagernet/wireguard-go/conn"
 )
 
 type QueueHandshakeElement struct {
@@ -71,6 +71,7 @@ func (peer *Peer) keepKeyFreshReceiving() {
  * IPv4 and IPv6 (separately)
  */
 func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.ReceiveFunc) {
+	defer NoCrash(device)
 	recvName := recv.PrettyName()
 	defer func() {
 		device.log.Verbosef("Routine: receive incoming %s - stopped", recvName)
@@ -237,6 +238,7 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 }
 
 func (device *Device) RoutineDecryption(id int) {
+	defer NoCrash(device)
 	var nonce [chacha20poly1305.NonceSize]byte
 
 	defer device.log.Verbosef("Routine: decryption worker %d - stopped", id)
@@ -270,6 +272,7 @@ func (device *Device) RoutineDecryption(id int) {
 /* Handles incoming packets related to handshake
  */
 func (device *Device) RoutineHandshake(id int) {
+	defer NoCrash(device)
 	defer func() {
 		device.log.Verbosef("Routine: handshake worker %d - stopped", id)
 		device.queue.encryption.wg.Done()
@@ -432,6 +435,7 @@ func (device *Device) RoutineHandshake(id int) {
 
 func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
 	device := peer.device
+	defer NoCrash(device)
 	defer func() {
 		device.log.Verbosef("%v - Routine: sequential receiver - stopped", peer)
 		peer.stopping.Done()

@@ -14,6 +14,7 @@ import (
 const DefaultMTU = 1420
 
 func (device *Device) RoutineTUNEventReader() {
+	defer NoCrash(device)
 	device.log.Verbosef("Routine: event worker - started")
 
 	for event := range device.tun.device.Events() {

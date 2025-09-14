@@ -9,8 +9,9 @@ import (
 	"net"
 	"os"
 
-	"golang.org/x/sys/unix"
+	"github.com/sagernet/wireguard-go/rostovvpn"
 	"github.com/sagernet/wireguard-go/rwcancel"
+	"golang.org/x/sys/unix"
 )
 
 type UAPIListener struct {
@@ -96,6 +97,7 @@ func UAPIListen(name string, file *os.File) (net.Listener, error) {
 	}
 
 	go func(l *UAPIListener) {
+		defer rostovvpn.NoCrash()
 		var buf [0]byte
 		for {
 			defer uapi.inotifyRWCancel.Close()
@@ -115,6 +117,7 @@ func UAPIListen(name string, file *os.File) (net.Listener, error) {
 	// watch for new connections
 
 	go func(l *UAPIListener) {
+		defer rostovvpn.NoCrash()
 		for {
 			conn, err := l.listener.Accept()
 			if err != nil {

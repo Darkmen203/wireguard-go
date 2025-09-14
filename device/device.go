@@ -6,13 +6,13 @@
 package device
 
 import (
-	"context"
+	"fmt"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/sagernet/sing/common/atomic"
-	"github.com/sagernet/sing/service/pause"
+
 	"github.com/sagernet/wireguard-go/conn"
 	"github.com/sagernet/wireguard-go/ratelimiter"
 	"github.com/sagernet/wireguard-go/rwcancel"
@@ -88,10 +88,15 @@ type Device struct {
 		mtu    atomic.Int32
 	}
 
-	ipcMutex     sync.RWMutex
-	closed       chan struct{}
-	log          *Logger
-	pauseManager pause.Manager
+	ipcMutex            sync.RWMutex
+	closed              chan struct{}
+	log                 *Logger
+	FakePackets         []int
+	FakePacketsDelays   []int
+	FakePacketsSize     []int
+	FakePacketsHeader   []byte
+	FakePacketsNoModify bool
+	stopCh              chan int //rostovvpn
 }
 
 // deviceState represents the state of a Device.
@@ -127,6 +132,9 @@ func (device *Device) isClosed() bool {
 func (device *Device) isUp() bool {
 	return device.deviceState() == deviceStateUp
 }
+func (device *Device) IsUp() bool {
+	return device.isUp()
+}
 
 // Must hold device.peers.Lock()
 func removePeerLocked(device *Device, peer *Peer, key NoisePublicKey) {
@@ -140,12 +148,13 @@ func removePeerLocked(device *Device, peer *Peer, key NoisePublicKey) {
 
 // changeState attempts to change the device state to match want.
 func (device *Device) changeState(want deviceState) (err error) {
+	defer NoCrash(device)
 	device.state.Lock()
 	defer device.state.Unlock()
 	old := device.deviceState()
 	if old == deviceStateClosed {
 		// once closed, always closed
-		device.log.Verbosef("Interface closed, ignored requested state %s", want)
+		device.log.Errorf("Interface closed, ignored requested state %s", want)
 		return nil
 	}
 	switch want {
@@ -173,8 +182,8 @@ func (device *Device) changeState(want deviceState) (err error) {
 // The caller must hold device.state.mu and is responsible for updating device.state.state.
 func (device *Device) upLocked() error {
 	if err := device.BindUpdate(); err != nil {
-		device.log.Errorf("Unable to update bind: %v", err)
-		return err
+		device.log.Errorf("RostovVPN! Unable to update bind: %v", err)
+		return fmt.Errorf("unable to update bind: %v", err)
 	}
 
 	// The IPC set operation waits for peers to be created before calling Start() on them,
@@ -284,9 +293,9 @@ func (device *Device) SetPrivateKey(sk NoisePrivateKey) error {
 	return nil
 }
 
-func NewDevice(ctx context.Context, tunDevice tun.Device, bind conn.Bind, logger *Logger, workers int) *Device {
+func NewDevice(tunDevice tun.Device, bind conn.Bind, logger *Logger, workers int) *Device {
 	device := new(Device)
-	device.pauseManager = pause.ManagerFromContext(ctx)
+	device.stopCh = make(chan int, 1) //RostovVPN
 	device.state.state.Store(uint32(deviceStateDown))
 	device.closed = make(chan struct{})
 	device.log = logger
@@ -374,6 +383,7 @@ func (device *Device) RemoveAllPeers() {
 }
 
 func (device *Device) Close() {
+	defer NoCrash(device)
 	device.ipcMutex.Lock()
 	defer device.ipcMutex.Unlock()
 	device.state.Lock()
@@ -430,6 +440,10 @@ func (device *Device) SendKeepalivesToPeersWithCurrentKeypair() {
 // The caller must hold the net mutex.
 func closeBindLocked(device *Device) error {
 	var err error
+	select {
+	case device.stopCh <- 1:
+	default:
+	}
 	netc := &device.net
 	if netc.netlinkCancel != nil {
 		netc.netlinkCancel.Cancel()
@@ -438,10 +452,14 @@ func closeBindLocked(device *Device) error {
 		err = netc.bind.Close()
 	}
 	netc.stopping.Wait()
+	if err != nil {
+		return fmt.Errorf("closeBindLocked %v", err)
+	}
 	return err
 }
 
 func (device *Device) Bind() conn.Bind {
+	defer NoCrash(device)
 	device.net.Lock()
 	defer device.net.Unlock()
 	return device.net.bind
@@ -479,16 +497,18 @@ func (device *Device) BindSetMark(mark uint32) error {
 }
 
 func (device *Device) BindUpdate() error {
+	defer NoCrash(device)
 	device.net.Lock()
 	defer device.net.Unlock()
 
 	// close existing sockets
 	if err := closeBindLocked(device); err != nil {
-		return err
+		return fmt.Errorf("RostovVPN! closing old bind %v", err)
 	}
 
 	// open new sockets
 	if !device.isUp() {
+		device.log.Errorf("RostovVPN! device is not up so will not update")
 		return nil
 	}
 
@@ -499,22 +519,28 @@ func (device *Device) BindUpdate() error {
 
 	recvFns, netc.port, err = netc.bind.Open(netc.port)
 	if err != nil {
+		device.log.Errorf("RostovVPN! Error in opening new bind %v", err)
 		netc.port = 0
-		return err
+		recvFns, netc.port, err = netc.bind.Open(netc.port) //rostovVPN: retry
+		if err != nil {
+			netc.port = 0
+			return fmt.Errorf("RostovVPN! Error in opening new bind %v", err)
+		}
 	}
 
 	netc.netlinkCancel, err = device.startRouteListener(netc.bind)
 	if err != nil {
 		netc.bind.Close()
 		netc.port = 0
-		return err
+		return fmt.Errorf("Error in starting route listener %v", err)
 	}
 
 	// set fwmark
 	if netc.fwmark != 0 {
 		err = netc.bind.SetMark(netc.fwmark)
 		if err != nil {
-			return err
+			return fmt.Errorf("Error in setting mark %v", err)
+
 		}
 	}
 
@@ -538,11 +564,12 @@ func (device *Device) BindUpdate() error {
 		go device.RoutineReceiveIncoming(batchSize, fn)
 	}
 
-	device.log.Verbosef("UDP bind has been updated")
+	device.log.Verbosef("RostovVPN! UDP bind has been updated")
 	return nil
 }
 
 func (device *Device) BindClose() error {
+	defer NoCrash(device)
 	device.net.Lock()
 	err := closeBindLocked(device)
 	device.net.Unlock()

@@ -8,8 +8,9 @@ package ipc
 import (
 	"net"
 
-	"golang.org/x/sys/windows"
+	"github.com/sagernet/wireguard-go/rostovvpn"
 	"github.com/sagernet/wireguard-go/ipc/namedpipe"
+	"golang.org/x/sys/windows"
 )
 
 // TODO: replace these with actual standard windows error numbers from the win package
@@ -74,6 +75,7 @@ func UAPIListen(name string) (net.Listener, error) {
 	}
 
 	go func(l *UAPIListener) {
+		defer rostovvpn.NoCrash()
 		for {
 			conn, err := l.listener.Accept()
 			if err != nil {

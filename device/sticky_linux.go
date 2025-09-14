@@ -18,9 +18,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"golang.org/x/sys/unix"
 	"github.com/sagernet/wireguard-go/conn"
 	"github.com/sagernet/wireguard-go/rwcancel"
+	"golang.org/x/sys/unix"
 )
 
 func (device *Device) startRouteListener(bind conn.Bind) (*rwcancel.RWCancel, error) {
@@ -47,6 +47,7 @@ func (device *Device) startRouteListener(bind conn.Bind) (*rwcancel.RWCancel, er
 }
 
 func (device *Device) routineRouteListener(bind conn.Bind, netlinkSock int, netlinkCancel *rwcancel.RWCancel) {
+	defer NoCrash(device)
 	type peerEndpointPtr struct {
 		peer     *Peer
 		endpoint *conn.Endpoint
@@ -130,6 +131,7 @@ func (device *Device) routineRouteListener(bind conn.Bind, netlinkSock int, netl
 				reqPeer = make(map[uint32]peerEndpointPtr)
 				reqPeerLock.Unlock()
 				go func() {
+					defer NoCrash(device)
 					device.peers.RLock()
 					i := uint32(1)
 					for _, peer := range device.peers.keyMap {

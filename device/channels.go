@@ -29,6 +29,7 @@ func newOutboundQueue() *outboundQueue {
 	}
 	q.wg.Add(1)
 	go func() {
+		defer NoCrash(nil)
 		q.wg.Wait()
 		close(q.c)
 	}()
@@ -47,6 +48,7 @@ func newInboundQueue() *inboundQueue {
 	}
 	q.wg.Add(1)
 	go func() {
+		defer NoCrash(nil)
 		q.wg.Wait()
 		close(q.c)
 	}()
@@ -65,6 +67,7 @@ func newHandshakeQueue() *handshakeQueue {
 	}
 	q.wg.Add(1)
 	go func() {
+		defer NoCrash(nil)
 		q.wg.Wait()
 		close(q.c)
 	}()

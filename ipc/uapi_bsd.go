@@ -13,6 +13,7 @@ import (
 	"os"
 	"unsafe"
 
+	"github.com/sagernet/wireguard-go/rostovvpn"
 	"golang.org/x/sys/unix"
 )
 
@@ -86,6 +87,7 @@ func UAPIListen(name string, file *os.File) (net.Listener, error) {
 	}
 
 	go func(l *UAPIListener) {
+		defer rostovvpn.NoCrash()
 		event := unix.Kevent_t{
 			Filter: unix.EVFILT_VNODE,
 			Flags:  unix.EV_ADD | unix.EV_ENABLE | unix.EV_ONESHOT,
@@ -118,6 +120,7 @@ func UAPIListen(name string, file *os.File) (net.Listener, error) {
 	// watch for new connections
 
 	go func(l *UAPIListener) {
+		defer rostovvpn.NoCrash()
 		for {
 			conn, err := l.listener.Accept()
 			if err != nil {

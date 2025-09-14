@@ -49,12 +49,18 @@ type Bind interface {
 	// bufs must not exceed BatchSize().
 	Send(bufs [][]byte, ep Endpoint) error
 
+	//RostovVPN-GFW-knocker
+	SendWithoutModify(bufs [][]byte, ep Endpoint) error
+
+
 	// ParseEndpoint creates a new endpoint from a string.
 	ParseEndpoint(s string) (Endpoint, error)
 
 	// BatchSize is the number of buffers expected to be passed to
 	// the ReceiveFuncs, and the maximum expected to be passed to SendBatch.
 	BatchSize() int
+
+	SetReservedForEndpoint(destination netip.AddrPort, reserved [3]byte)
 }
 
 // BindSocketToInterface is implemented by Bind objects that support being
